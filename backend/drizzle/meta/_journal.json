@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1774621423083,
+      "tag": "0000_mature_justin_hammer",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1774700334892,
+      "tag": "0001_overjoyed_shinko_yamashiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1774700422627,
+      "tag": "0002_shallow_blob",
+      "breakpoints": true
+    }
+  ]
+}
