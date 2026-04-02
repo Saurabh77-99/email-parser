@@ -1,4 +1,4 @@
-const BACKEND_URL = "https://backend-orcin-three-70.vercel.app";
+const BACKEND_URL = "https://email-parser-backend.vercel.app";
 
 function buildHomePage() { return renderHomeView(); }
 function onGmailMessageOpen(e) { return renderMockParser(e); }

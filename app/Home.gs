@@ -1,56 +1,58 @@
-/**
- * VIEW: Live Dashboard (Refined Card UI)
- */
-function renderHomeView() {
-  var stats = fetchFromBackend("/stats");
+/** * VIEW: Live Dashboard */ function renderHomeView() {
   var builder = CardService.newCardBuilder();
-  
-  // High-Fidelity Header
-  builder.setHeader(CardService.newCardHeader()
-    .setTitle("Parser Engine")
-    .setImageUrl("https://www.gstatic.com/images/branding/product/1x/gmail_512dp.png"));
-
-  // NAV AT TOP
+  builder.setHeader(
+    CardService.newCardHeader()
+      .setTitle("Parser Engine")
+      .setImageUrl(
+        "https://www.gstatic.com/images/branding/product/1x/gmail_512dp.png",
+      ),
+  );
   builder.addSection(createTopNavBar());
-
-  // --- Pill-Style Metrics Section ---
-  var statsSection = CardService.newCardSection();
-
-  if (stats) {
-    statsSection.addWidget(CardService.newDecoratedText()
-      .setText("<b>" + stats.totalMessages + "</b>")
-      .setTopLabel("📧 EMAILS PARSED")
-      .setBottomLabel("↑ 12% from last week")
-      .setStartIcon(CardService.newIconImage().setIconUrl("https://www.gstatic.com/images/icons/material/system/1x/mail_black_24dp.png")));
-
-    statsSection.addWidget(CardService.newDecoratedText()
-      .setText("<b>" + stats.totalExtractions + "</b>")
-      .setTopLabel("✅ SUCCESS RATE")
-      .setBottomLabel("98.5% Accuracy")
-      .setStartIcon(CardService.newIconImage().setIconUrl("https://www.gstatic.com/images/icons/material/system/1x/check_circle_black_24dp.png")));
-  }
-
-  // --- Recent Activity ---
-  var activitySection = CardService.newCardSection()
-    .setHeader("Recent Activity");
-  
-  var recent = fetchFromBackend("/activity");
-  if (recent && recent.length > 0) {
-    recent.forEach(function(item) {
-      activitySection.addWidget(CardService.newDecoratedText()
-        .setText(item.subject)
-        .setBottomLabel("Parsed " + item.createdAt)
-        .setStartIcon(CardService.newIconImage().setIcon(CardService.Icon.DESCRIPTION))
-        .setOnClickAction(CardService.newAction()
-          .setFunctionName("openEmailInGmail")
-          .setParameters({messageId: item.messageId})));
-    });
-  }
-
+  var stats = null;
+  try {
+    stats = fetchFromBackend("/stats");
+  } catch (e) {}
+  var statsSection = CardService.newCardSection().setHeader("Stats");
+  statsSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel("Emails Parsed")
+      .setText(stats ? String(stats.totalMessages) : "0"),
+  );
+  statsSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel("Extractions")
+      .setText(stats ? String(stats.totalExtractions) : "0"),
+  );
+  statsSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel("Last Sync")
+      .setText(stats ? String(stats.lastSync) : "Never"),
+  );
   builder.addSection(statsSection);
+  var recent = null;
+  try {
+    recent = fetchFromBackend("/activity");
+  } catch (e) {}
+  var activitySection =
+    CardService.newCardSection().setHeader("Recent Activity");
+  if (recent && recent.length > 0) {
+    recent.forEach(function (item) {
+      activitySection.addWidget(
+        CardService.newDecoratedText()
+          .setText(item.subject || "No subject")
+          .setBottomLabel(item.createdAt || ""),
+      );
+    });
+  } else {
+    activitySection.addWidget(
+      CardService.newDecoratedText()
+        .setText("No emails parsed yet.")
+        .setBottomLabel("Run a sync to get started"),
+    );
+  }
   builder.addSection(activitySection);
-  
   return builder.build();
 }
-
-function renderMockDashboard() { return renderHomeView(); }
+function renderMockDashboard() {
+  return renderHomeView();
+}

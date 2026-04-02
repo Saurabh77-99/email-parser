@@ -9,6 +9,24 @@ const app = new Hono();
 
 app.get("/", (c) => c.text("Email Parser Engine API is running!"));
 
+app.get("/healthz", async (c) => {
+  try {
+    await db.select({ count: sql<number>`count(*)` }).from(rules);
+    return c.json({ 
+      db: "ok", 
+      url: process.env.TURSO_URL ? "set" : "MISSING", 
+      token: process.env.TURSO_AUTH_TOKEN ? "set" : "MISSING" 
+    });
+  } catch (e: any) {
+    return c.json({ 
+      db: "error", 
+      message: e.message,
+      url: process.env.TURSO_URL ? "set" : "MISSING",
+      token: process.env.TURSO_AUTH_TOKEN ? "set" : "MISSING"
+    }, 500);
+  }
+});
+
 /**
  * Management: Get all active extraction rules.
  */
