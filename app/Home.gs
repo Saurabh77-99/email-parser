@@ -8,10 +8,12 @@
       ),
   );
   builder.addSection(createTopNavBar());
+
   var stats = null;
   try {
     stats = fetchFromBackend("/stats");
   } catch (e) {}
+
   var statsSection = CardService.newCardSection().setHeader("Stats");
   statsSection.addWidget(
     CardService.newDecoratedText()
@@ -28,7 +30,18 @@
       .setTopLabel("Last Sync")
       .setText(stats ? String(stats.lastSync) : "Never"),
   );
+
+  var syncSection = CardService.newCardSection().addWidget(
+    CardService.newTextButton()
+      .setText("🔄 SYNC NOW")
+      .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+      .setOnClickAction(
+        CardService.newAction().setFunctionName("triggerFullSync"),
+      ),
+  );
   builder.addSection(statsSection);
+  builder.addSection(syncSection);
+
   var recent = null;
   try {
     recent = fetchFromBackend("/activity");
