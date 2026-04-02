@@ -96,6 +96,12 @@ app.get("/activity", async (c) => {
   return c.json(recent);
 });
 
+app.delete("/rules/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  await db.delete(rules).where(eq(rules.id, id));
+  return c.json({ status: "deleted" });
+});
+
 /**
  * Management: Get all extracted records for a specific rule (JSON format for UI).
  */
