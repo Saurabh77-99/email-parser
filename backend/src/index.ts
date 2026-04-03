@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "./db/index.js";
 import { rules, messages, results } from "./db/schema.js";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, inArray } from "drizzle-orm";
 
 const app = new Hono();
 
@@ -44,7 +44,7 @@ app.get("/rules", async (c) => {
 const createRuleSchema = z.object({
   name: z.string(),
   criteriaQuery: z.string(),
-  targetFields: z.string(), // Validates as JSON string in logic
+  targetFields: z.string(),
 });
 
 app.post("/rules", zValidator("json", createRuleSchema), async (c) => {
@@ -107,12 +107,6 @@ app.get("/activity", async (c) => {
   return c.json(recent);
 });
 
-app.delete("/rules/:id", async (c) => {
-  const id = parseInt(c.req.param("id"));
-  await db.delete(rules).where(eq(rules.id, id));
-  return c.json({ status: "deleted" });
-});
-
 /**
  * Management: Get all extracted records for a specific rule (JSON format for UI).
  */
@@ -131,7 +125,6 @@ app.get("/browse/:ruleId", async (c) => {
     .where(eq(messages.ruleId, ruleId))
     .orderBy(sql`messages.created_at DESC`);
 
-  // Group by messageId for a cleaner UI list
   const grouped: Record<string, any> = {};
   data.forEach((row) => {
     if (!grouped[row.messageId]) {
@@ -149,6 +142,32 @@ app.get("/browse/:ruleId", async (c) => {
 });
 
 /**
+ * Management: Delete rule (cascades to messages and results).
+ */
+app.delete("/rules/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  try {
+    const ruleMessages = await db
+      .select({ messageId: messages.messageId })
+      .from(messages)
+      .where(eq(messages.ruleId, id));
+
+    const messageIds = ruleMessages.map((m) => m.messageId);
+
+    if (messageIds.length > 0) {
+      await db.delete(results).where(inArray(results.messageId, messageIds));
+      await db.delete(messages).where(eq(messages.ruleId, id));
+    }
+
+    await db.delete(rules).where(eq(rules.id, id));
+
+    return c.json({ status: "deleted" });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+/**
  * Ingest payload from Apps Script.
  */
 const ingestSchema = z.object({
@@ -162,7 +181,6 @@ const ingestSchema = z.object({
 app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
   const { ruleId, messageId, subject, sender, rawBody } = c.req.valid("json");
 
-  // Get extraction rule
   const ruleRes = await db.query.rules.findFirst({
     where: eq(rules.id, ruleId),
   });
@@ -171,28 +189,19 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
     return c.json({ error: "Rule not found" }, 404);
   }
 
-  // Store message (onConflictDoNothing handles already processed messages)
   try {
     await db
       .insert(messages)
-      .values({
-        messageId,
-        ruleId,
-        subject,
-        sender,
-        rawBody,
-      })
+      .values({ messageId, ruleId, subject, sender, rawBody })
       .onConflictDoNothing();
   } catch (err) {
     console.error("Message insert error:", err);
   }
 
-  // Parse target_fields JSON
   let targetFields;
   try {
     targetFields = JSON.parse(ruleRes.targetFields);
   } catch (err) {
-    console.error("Rule JSON parse error:", err);
     return c.json({ error: "Invalid extraction rule format" }, 500);
   }
 
@@ -206,16 +215,11 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
     }
   }
 
-  // Store extracted results
   if (extractedData.length > 0) {
     for (const data of extractedData) {
       await db
         .insert(results)
-        .values({
-          messageId,
-          key: data.key,
-          value: data.value,
-        })
+        .values({ messageId, key: data.key, value: data.value })
         .onConflictDoUpdate({
           target: [results.id],
           set: { value: data.value },
@@ -223,13 +227,12 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
     }
   }
 
-  return c.json({
-    status: "success",
-    extracted: extractedData.length,
-  });
+  return c.json({ status: "success", extracted: extractedData.length });
 });
 
-// Ingest with attachments
+/**
+ * Ingest with attachments (Rich).
+ */
 const ingestWithAttachmentsSchema = z.object({
   ruleId: z.number(),
   messageId: z.string(),
@@ -241,7 +244,7 @@ const ingestWithAttachmentsSchema = z.object({
       z.object({
         name: z.string(),
         mimeType: z.string(),
-        data: z.string(), // base64
+        data: z.string(),
       }),
     )
     .optional(),
@@ -261,13 +264,7 @@ app.post(
 
     await db
       .insert(messages)
-      .values({
-        messageId,
-        ruleId,
-        subject,
-        sender,
-        rawBody,
-      })
+      .values({ messageId, ruleId, subject, sender, rawBody })
       .onConflictDoNothing();
 
     let targetFields: Record<string, string> = {};
@@ -277,14 +274,12 @@ app.post(
 
     const extractedData: Array<{ key: string; value: string }> = [];
 
-    // Extract from body
     for (const [key, pattern] of Object.entries(targetFields)) {
       const regex = new RegExp(pattern, "i");
       const match = rawBody.match(regex);
       if (match) extractedData.push({ key, value: match[1] || match[0] });
     }
 
-    // Store attachment metadata
     if (attachments && attachments.length > 0) {
       for (const att of attachments) {
         extractedData.push({
@@ -308,13 +303,16 @@ app.post(
   },
 );
 
-// Summary: get grouped data for a rule with sender + date filters
+/**
+ * Summary: get grouped data for a rule with sender + date filters.
+ */
 app.get("/summary/:ruleId", async (c) => {
   const ruleId = parseInt(c.req.param("ruleId"));
   const sender = c.req.query("sender");
-  const from = c.req.query("from"); // ISO date
+  const from = c.req.query("from");
   const to = c.req.query("to");
 
+  // FIX: Was joining messages ON messages. Now correctly joins results ON messages.
   let query = db
     .select({
       messageId: messages.messageId,
@@ -325,24 +323,21 @@ app.get("/summary/:ruleId", async (c) => {
       value: results.value,
     })
     .from(messages)
-    .innerJoin(messages, eq(results.messageId, messages.messageId))
+    .leftJoin(results, eq(results.messageId, messages.messageId))
     .where(eq(messages.ruleId, ruleId));
 
   const allRows = await query;
 
-  // Filter by sender
   let filtered = sender
     ? allRows.filter((r) =>
         r.sender?.toLowerCase().includes(sender.toLowerCase()),
       )
     : allRows;
 
-  // Filter by date range
   if (from)
     filtered = filtered.filter((r) => r.createdAt && r.createdAt >= from);
   if (to) filtered = filtered.filter((r) => r.createdAt && r.createdAt <= to);
 
-  // Group by messageId
   const grouped: Record<string, any> = {};
   filtered.forEach((row) => {
     if (!grouped[row.messageId]) {
@@ -354,7 +349,9 @@ app.get("/summary/:ruleId", async (c) => {
         fields: {},
       };
     }
-    grouped[row.messageId].fields[row.key] = row.value;
+    if (row.key) {
+      grouped[row.messageId].fields[row.key] = row.value;
+    }
   });
 
   return c.json({
@@ -364,40 +361,6 @@ app.get("/summary/:ruleId", async (c) => {
     data: Object.values(grouped),
   });
 });
-
-// Delete rule (cascade)
-app.delete("/rules/:id", async (c) => {
-  const id = parseInt(c.req.param("id"));
-
-  // Find all messageIds for this rule
-  const ruleMessages = await db
-    .select({ messageId: messages.messageId })
-    .from(messages)
-    .where(eq(messages.ruleId, id));
-
-  const messageIds = ruleMessages.map(m => m.messageId);
-
-  // Delete results for these messages
-  if (messageIds.length > 0) {
-    for (const mid of messageIds) {
-      await db.delete(results).where(eq(results.messageId, mid));
-    }
-    // Delete the messages
-    await db.delete(messages).where(eq(messages.ruleId, id));
-  }
-
-  // Delete the rule
-  await db.delete(rules).where(eq(rules.id, id));
-
-  return c.json({ status: "deleted" });
-});
-// Delete rule
-// app.delete("/rules/:id", async (c) => {
-//   const id = parseInt(c.req.param("id"));
-
-//   await db.delete(rules).where(eq(rules.id, id));
-//   return c.json({ status: "deleted" });
-// });
 
 /**
  * Export CSV for a specific rule.
@@ -422,7 +385,6 @@ app.get("/export/:ruleId", async (c) => {
     return c.text("No data found for this rule.", 404);
   }
 
-  // Build CSV from grouped results
   const grouped: Record<string, any> = {};
   const keys = new Set<string>();
 
