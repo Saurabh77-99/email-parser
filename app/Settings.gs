@@ -71,6 +71,18 @@ function renderSettingsView() {
     );
   builder.addSection(scheduleSection);
 
+  var advancedSection = CardService.newCardSection()
+    .setHeader("Advanced Tools")
+    .addWidget(
+      CardService.newTextButton()
+        .setText("🔍 ADVANCED SYNC & EXPORT")
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOnClickAction(
+          CardService.newAction().setFunctionName("renderAdvancedSyncView"),
+        ),
+    );
+  builder.addSection(advancedSection);
+
   var authSection = CardService.newCardSection()
     .setHeader("Permissions")
     .addWidget(

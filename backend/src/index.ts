@@ -12,18 +12,21 @@ app.get("/", (c) => c.text("Email Parser Engine API is running!"));
 app.get("/healthz", async (c) => {
   try {
     await db.select({ count: sql<number>`count(*)` }).from(rules);
-    return c.json({ 
-      db: "ok", 
-      url: process.env.TURSO_URL ? "set" : "MISSING", 
-      token: process.env.TURSO_AUTH_TOKEN ? "set" : "MISSING" 
+    return c.json({
+      db: "ok",
+      url: process.env.TURSO_URL ? "set" : "MISSING",
+      token: process.env.TURSO_AUTH_TOKEN ? "set" : "MISSING",
     });
   } catch (e: any) {
-    return c.json({ 
-      db: "error", 
-      message: e.message,
-      url: process.env.TURSO_URL ? "set" : "MISSING",
-      token: process.env.TURSO_AUTH_TOKEN ? "set" : "MISSING"
-    }, 500);
+    return c.json(
+      {
+        db: "error",
+        message: e.message,
+        url: process.env.TURSO_URL ? "set" : "MISSING",
+        token: process.env.TURSO_AUTH_TOKEN ? "set" : "MISSING",
+      },
+      500,
+    );
   }
 });
 
@@ -46,7 +49,7 @@ const createRuleSchema = z.object({
 
 app.post("/rules", zValidator("json", createRuleSchema), async (c) => {
   const { name, criteriaQuery, targetFields } = c.req.valid("json");
-  
+
   try {
     JSON.parse(targetFields); // Validate JSON format
   } catch (e) {
@@ -67,15 +70,23 @@ app.post("/rules", zValidator("json", createRuleSchema), async (c) => {
  * Management: Get high-level analytics for the dashboard.
  */
 app.get("/stats", async (c) => {
-  const [msgCount] = await db.select({ count: sql<number>`count(*)` }).from(messages);
-  const [resCount] = await db.select({ count: sql<number>`count(*)` }).from(results);
-  const lastActivity = await db.select().from(messages).orderBy(sql`created_at DESC`).limit(1);
+  const [msgCount] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages);
+  const [resCount] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(results);
+  const lastActivity = await db
+    .select()
+    .from(messages)
+    .orderBy(sql`created_at DESC`)
+    .limit(1);
 
   return c.json({
     totalMessages: msgCount.count,
     totalExtractions: resCount.count,
     lastSync: lastActivity[0]?.createdAt || "Never",
-    status: "Healthy"
+    status: "Healthy",
   });
 });
 
@@ -122,13 +133,13 @@ app.get("/browse/:ruleId", async (c) => {
 
   // Group by messageId for a cleaner UI list
   const grouped: Record<string, any> = {};
-  data.forEach(row => {
+  data.forEach((row) => {
     if (!grouped[row.messageId]) {
-      grouped[row.messageId] = { 
-        messageId: row.messageId, 
-        subject: row.subject, 
+      grouped[row.messageId] = {
+        messageId: row.messageId,
+        subject: row.subject,
         createdAt: row.createdAt,
-        data: {} 
+        data: {},
       };
     }
     grouped[row.messageId].data[row.key] = row.value;
@@ -162,13 +173,16 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
 
   // Store message (onConflictDoNothing handles already processed messages)
   try {
-    await db.insert(messages).values({
-      messageId,
-      ruleId,
-      subject,
-      sender,
-      rawBody,
-    }).onConflictDoNothing();
+    await db
+      .insert(messages)
+      .values({
+        messageId,
+        ruleId,
+        subject,
+        sender,
+        rawBody,
+      })
+      .onConflictDoNothing();
   } catch (err) {
     console.error("Message insert error:", err);
   }
@@ -195,14 +209,17 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
   // Store extracted results
   if (extractedData.length > 0) {
     for (const data of extractedData) {
-      await db.insert(results).values({
-        messageId,
-        key: data.key,
-        value: data.value,
-      }).onConflictDoUpdate({
-        target: [results.id],
-        set: { value: data.value }
-      });
+      await db
+        .insert(results)
+        .values({
+          messageId,
+          key: data.key,
+          value: data.value,
+        })
+        .onConflictDoUpdate({
+          target: [results.id],
+          set: { value: data.value },
+        });
     }
   }
 
@@ -210,6 +227,149 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
     status: "success",
     extracted: extractedData.length,
   });
+});
+
+// Ingest with attachments
+const ingestWithAttachmentsSchema = z.object({
+  ruleId: z.number(),
+  messageId: z.string(),
+  subject: z.string(),
+  sender: z.string(),
+  rawBody: z.string(),
+  attachments: z
+    .array(
+      z.object({
+        name: z.string(),
+        mimeType: z.string(),
+        data: z.string(), // base64
+      }),
+    )
+    .optional(),
+});
+
+app.post(
+  "/ingest-rich",
+  zValidator("json", ingestWithAttachmentsSchema),
+  async (c) => {
+    const { ruleId, messageId, subject, sender, rawBody, attachments } =
+      c.req.valid("json");
+
+    const ruleRes = await db.query.rules.findFirst({
+      where: eq(rules.id, ruleId),
+    });
+    if (!ruleRes) return c.json({ error: "Rule not found" }, 404);
+
+    await db
+      .insert(messages)
+      .values({
+        messageId,
+        ruleId,
+        subject,
+        sender,
+        rawBody,
+      })
+      .onConflictDoNothing();
+
+    let targetFields: Record<string, string> = {};
+    try {
+      targetFields = JSON.parse(ruleRes.targetFields);
+    } catch {}
+
+    const extractedData: Array<{ key: string; value: string }> = [];
+
+    // Extract from body
+    for (const [key, pattern] of Object.entries(targetFields)) {
+      const regex = new RegExp(pattern, "i");
+      const match = rawBody.match(regex);
+      if (match) extractedData.push({ key, value: match[1] || match[0] });
+    }
+
+    // Store attachment metadata
+    if (attachments && attachments.length > 0) {
+      for (const att of attachments) {
+        extractedData.push({
+          key: "attachment_" + att.name,
+          value: att.mimeType,
+        });
+      }
+    }
+
+    for (const data of extractedData) {
+      await db
+        .insert(results)
+        .values({ messageId, key: data.key, value: data.value })
+        .onConflictDoUpdate({
+          target: [results.id],
+          set: { value: data.value },
+        });
+    }
+
+    return c.json({ status: "success", extracted: extractedData.length });
+  },
+);
+
+// Summary: get grouped data for a rule with sender + date filters
+app.get("/summary/:ruleId", async (c) => {
+  const ruleId = parseInt(c.req.param("ruleId"));
+  const sender = c.req.query("sender");
+  const from = c.req.query("from"); // ISO date
+  const to = c.req.query("to");
+
+  let query = db
+    .select({
+      messageId: messages.messageId,
+      subject: messages.subject,
+      sender: messages.sender,
+      createdAt: messages.createdAt,
+      key: results.key,
+      value: results.value,
+    })
+    .from(results)
+    .innerJoin(messages, eq(results.messageId, messages.messageId))
+    .where(eq(messages.ruleId, ruleId));
+
+  const allRows = await query;
+
+  // Filter by sender
+  let filtered = sender
+    ? allRows.filter((r) =>
+        r.sender?.toLowerCase().includes(sender.toLowerCase()),
+      )
+    : allRows;
+
+  // Filter by date range
+  if (from)
+    filtered = filtered.filter((r) => r.createdAt && r.createdAt >= from);
+  if (to) filtered = filtered.filter((r) => r.createdAt && r.createdAt <= to);
+
+  // Group by messageId
+  const grouped: Record<string, any> = {};
+  filtered.forEach((row) => {
+    if (!grouped[row.messageId]) {
+      grouped[row.messageId] = {
+        messageId: row.messageId,
+        subject: row.subject,
+        sender: row.sender,
+        createdAt: row.createdAt,
+        fields: {},
+      };
+    }
+    grouped[row.messageId].fields[row.key] = row.value;
+  });
+
+  return c.json({
+    rule: ruleId,
+    totalEmails: Object.keys(grouped).length,
+    generatedAt: new Date().toISOString(),
+    data: Object.values(grouped),
+  });
+});
+
+// Delete rule
+app.delete("/rules/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  await db.delete(rules).where(eq(rules.id, id));
+  return c.json({ status: "deleted" });
 });
 
 /**
@@ -252,18 +412,29 @@ app.get("/export/:ruleId", async (c) => {
     keys.add(row.key);
   }
 
-  const header = ["messageId", "subject", "sender", "createdAt", ...Array.from(keys)];
+  const header = [
+    "messageId",
+    "subject",
+    "sender",
+    "createdAt",
+    ...Array.from(keys),
+  ];
   const csvRows = [header.join(",")];
 
   for (const rowId in grouped) {
     const row = grouped[rowId];
-    const csvRow = header.map((k) => `"${(row[k] || "").toString().replace(/"/g, '""')}"`);
+    const csvRow = header.map(
+      (k) => `"${(row[k] || "").toString().replace(/"/g, '""')}"`,
+    );
     csvRows.push(csvRow.join(","));
   }
 
   c.header("Content-Type", "text/csv");
-  c.header("Content-Disposition", `attachment; filename="export-rule-${ruleId}.csv"`);
-  
+  c.header(
+    "Content-Disposition",
+    `attachment; filename="export-rule-${ruleId}.csv"`,
+  );
+
   return c.text(csvRows.join("\n"));
 });
 
