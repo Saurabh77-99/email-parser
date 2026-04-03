@@ -49,9 +49,9 @@ function processEmails() {
     var threads = GmailApp.search(rule.criteriaQuery);
     threads.forEach(function(thread) {
       thread.getMessages().forEach(function(message) {
-        if (hasLabel(message, "Processed")) return;
+      if (hasLabel(message, "Processed_R" + rule.id)) return;
         var result = ingestMessage(message, rule.id);
-        if (result && result.status === "success") markAsProcessed(message);
+        if (result && result.status === "success") markAsProcessed(message, rule.id);
       });
     });
   });
@@ -61,8 +61,8 @@ function hasLabel(message, labelName) {
   return message.getThread().getLabels().some(function(l) { return l.getName() === labelName; });
 }
 
-function markAsProcessed(message) {
-  var labelName = "Processed";
+function markAsProcessed(message, ruleId) {
+  var labelName = "Processed_R" + ruleId;
   var label = GmailApp.getUserLabelByName(labelName) || GmailApp.createLabel(labelName);
   message.getThread().addLabel(label);
 }
@@ -152,10 +152,10 @@ function processEmailsFiltered(senderFilter, fromDate, toDate) {
     var threads = GmailApp.search(query);
     threads.forEach(function(thread) {
       thread.getMessages().forEach(function(message) {
-        if (hasLabel(message, "Processed")) return;
+        if (hasLabel(message, "Processed_R" + rule.id)) return;
         var result = ingestMessageRich(message, rule.id);
         if (result && result.status === "success") {
-          markAsProcessed(message);
+          markAsProcessed(message, rule.id);
           totalCount++;
         }
       });

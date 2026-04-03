@@ -324,7 +324,7 @@ app.get("/summary/:ruleId", async (c) => {
       key: results.key,
       value: results.value,
     })
-    .from(results)
+    .from(messages)
     .innerJoin(messages, eq(results.messageId, messages.messageId))
     .where(eq(messages.ruleId, ruleId));
 
