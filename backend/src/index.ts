@@ -365,12 +365,39 @@ app.get("/summary/:ruleId", async (c) => {
   });
 });
 
-// Delete rule
+// Delete rule (cascade)
 app.delete("/rules/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
+
+  // Find all messageIds for this rule
+  const ruleMessages = await db
+    .select({ messageId: messages.messageId })
+    .from(messages)
+    .where(eq(messages.ruleId, id));
+
+  const messageIds = ruleMessages.map(m => m.messageId);
+
+  // Delete results for these messages
+  if (messageIds.length > 0) {
+    for (const mid of messageIds) {
+      await db.delete(results).where(eq(results.messageId, mid));
+    }
+    // Delete the messages
+    await db.delete(messages).where(eq(messages.ruleId, id));
+  }
+
+  // Delete the rule
   await db.delete(rules).where(eq(rules.id, id));
+
   return c.json({ status: "deleted" });
 });
+// Delete rule
+// app.delete("/rules/:id", async (c) => {
+//   const id = parseInt(c.req.param("id"));
+
+//   await db.delete(rules).where(eq(rules.id, id));
+//   return c.json({ status: "deleted" });
+// });
 
 /**
  * Export CSV for a specific rule.
