@@ -12,8 +12,6 @@ function renderRulesView() {
         "https://www.gstatic.com/images/branding/product/1x/gmail_512dp.png",
       ),
   );
-
-  // NAV AT TOP
   builder.addSection(createTopNavBar());
 
   var section = CardService.newCardSection().setHeader("Configured Rules");
@@ -21,6 +19,8 @@ function renderRulesView() {
   if (rulesList && rulesList.length > 0) {
     rulesList.forEach(function (rule) {
       var status = rule.isActive ? "✅ ACTIVE" : "⏸ PAUSED";
+      var toggleLabel = rule.isActive ? "⏸ PAUSE" : "▶ ACTIVATE";
+
       section.addWidget(
         CardService.newDecoratedText()
           .setText(rule.name)
@@ -44,12 +44,24 @@ function renderRulesView() {
       );
 
       section.addWidget(
-        CardService.newTextButton()
-          .setText('🗑 DELETE "' + rule.name + '"')
-          .setOnClickAction(
-            CardService.newAction()
-              .setFunctionName("handleDeleteRule")
-              .setParameters({ ruleId: rule.id.toString() }),
+        CardService.newButtonSet()
+          .addButton(
+            CardService.newTextButton()
+              .setText(toggleLabel)
+              .setOnClickAction(
+                CardService.newAction()
+                  .setFunctionName("handleToggleRule")
+                  .setParameters({ ruleId: rule.id.toString() }),
+              ),
+          )
+          .addButton(
+            CardService.newTextButton()
+              .setText("🗑 DELETE")
+              .setOnClickAction(
+                CardService.newAction()
+                  .setFunctionName("handleDeleteRule")
+                  .setParameters({ ruleId: rule.id.toString() }),
+              ),
           ),
       );
 
@@ -57,22 +69,48 @@ function renderRulesView() {
     });
   } else {
     section.addWidget(
-      CardService.newTextParagraph().setText("No rules configured."),
+      CardService.newTextParagraph().setText("No rules configured yet."),
     );
   }
 
-  var actionSection = CardService.newCardSection().addWidget(
-    CardService.newTextButton()
-      .setText("➕ CREATE NEW RULE")
-      .setOnClickAction(
-        CardService.newAction().setFunctionName("renderCreateRuleView"),
-      ),
+  builder.addSection(section);
+  builder.addSection(
+    CardService.newCardSection().addWidget(
+      CardService.newTextButton()
+        .setText("➕ CREATE NEW RULE")
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOnClickAction(
+          CardService.newAction().setFunctionName("renderCreateRuleView"),
+        ),
+    ),
   );
 
-  builder.addSection(section);
-  builder.addSection(actionSection);
-
   return builder.build();
+}
+
+function handleToggleRule(e) {
+  var ruleId = e.parameters.ruleId;
+  try {
+    var response = UrlFetchApp.fetch(
+      BACKEND_URL + "/rules/" + ruleId + "/toggle",
+      {
+        method: "patch",
+        muteHttpExceptions: true,
+      },
+    );
+    var result = JSON.parse(response.getContentText());
+    var msg = result.isActive ? "✅ Rule activated!" : "⏸ Rule paused!";
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText(msg))
+      .setNavigation(CardService.newNavigation().updateCard(renderRulesView()))
+      .build();
+  } catch (err) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText("Failed to toggle rule."),
+      )
+      .build();
+  }
 }
 
 /**
@@ -95,11 +133,14 @@ function renderCreateRuleView() {
         .setFieldName("ai_prompt")
         .setTitle("What do you want to extract?")
         .setMultiline(true)
-        .setHint("e.g., Find all invoices from Amazon and extract the order ID, total amount, and date.")
+        .setHint(
+          "e.g., Find all invoices from Amazon and extract the order ID, total amount, and date.",
+        ),
     )
     .addWidget(
-      CardService.newTextParagraph()
-        .setText("The AI will automatically figure out the Gmail search query and the exact data patterns to extract.")
+      CardService.newTextParagraph().setText(
+        "The AI will automatically figure out the Gmail search query and the exact data patterns to extract.",
+      ),
     );
 
   var btnSection = CardService.newCardSection();
@@ -121,7 +162,7 @@ function renderCreateRuleView() {
           ),
       ),
   );
-  
+
   builder.addSection(section);
   builder.addSection(btnSection);
   builder.addSection(createBackButton());
@@ -134,11 +175,13 @@ function renderCreateRuleView() {
  */
 function handleAiRuleCreate(e) {
   var prompt = e.formInput.ai_prompt;
-  
+
   if (!prompt || prompt.length < 5) {
     return CardService.newActionResponseBuilder()
       .setNotification(
-        CardService.newNotification().setText("❌ Please describe what you want to extract."),
+        CardService.newNotification().setText(
+          "❌ Please describe what you want to extract.",
+        ),
       )
       .build();
   }
@@ -149,7 +192,7 @@ function handleAiRuleCreate(e) {
       method: "post",
       contentType: "application/json",
       payload: JSON.stringify({ prompt: prompt }),
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
     });
 
     var aiResult = JSON.parse(aiResponse.getContentText());
@@ -157,7 +200,9 @@ function handleAiRuleCreate(e) {
     if (aiResult.error) {
       return CardService.newActionResponseBuilder()
         .setNotification(
-          CardService.newNotification().setText("❌ AI Error: " + aiResult.error),
+          CardService.newNotification().setText(
+            "❌ AI Error: " + aiResult.error,
+          ),
         )
         .build();
     }
@@ -169,15 +214,17 @@ function handleAiRuleCreate(e) {
       payload: JSON.stringify({
         name: aiResult.name,
         criteriaQuery: aiResult.criteriaQuery,
-        targetFields: aiResult.targetFields
+        targetFields: aiResult.targetFields,
       }),
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
     });
 
     if (saveResponse.getResponseCode() === 200) {
       return CardService.newActionResponseBuilder()
         .setNotification(
-          CardService.newNotification().setText("✅ AI Rule '" + aiResult.name + "' created!"),
+          CardService.newNotification().setText(
+            "✅ AI Rule '" + aiResult.name + "' created!",
+          ),
         )
         .setNavigation(
           CardService.newNavigation().updateCard(renderRulesView()),
@@ -193,7 +240,9 @@ function handleAiRuleCreate(e) {
   } catch (err) {
     return CardService.newActionResponseBuilder()
       .setNotification(
-        CardService.newNotification().setText("System error: " + err.toString()),
+        CardService.newNotification().setText(
+          "System error: " + err.toString(),
+        ),
       )
       .build();
   }
@@ -245,8 +294,8 @@ function runSingleRule(e) {
     threads.forEach(function (thread) {
       thread.getMessages().forEach(function (message) {
         // Use per-rule label to avoid conflicts
-        if (hasLabel(message, "Processed_R" + ruleId)) return;
-        var result = ingestMessage(message, ruleId);
+        if (hasLabel(message, "Parsed/Rule_" + ruleId)) return;
+        var result = ingestMessageRich(message, ruleId);
         if (result && result.status === "success") {
           markAsProcessed(message, ruleId);
           count++;
@@ -267,18 +316,6 @@ function runSingleRule(e) {
         CardService.newNotification().setText("Error: " + err.toString()),
       )
       .build();
-  }
-}
-
-/**
- * HELPER: Parse "Label: Example" into regex object
- */
-function parseCustomField(input, targetFields) {
-  if (input && input.includes(":")) {
-    var parts = input.split(":");
-    var key = parts[0].trim().toLowerCase().replace(/\s+/g, "_");
-    var label = parts[0].trim();
-    targetFields[key] = label + ":\\s*(.+)";
   }
 }
 

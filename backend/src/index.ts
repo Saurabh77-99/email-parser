@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db } from "./db/index.js";
 import { rules, messages, results } from "./db/schema.js";
-import { eq, sql, inArray } from "drizzle-orm";
+import { eq, sql, inArray, and } from "drizzle-orm";
 
 const app = new Hono();
 
@@ -121,7 +121,13 @@ app.get("/browse/:ruleId", async (c) => {
       createdAt: messages.createdAt,
     })
     .from(results)
-    .innerJoin(messages, eq(results.messageId, messages.messageId))
+    .innerJoin(
+      messages,
+      and(
+        eq(results.messageId, messages.messageId),
+        eq(results.ruleId, messages.ruleId),
+      ),
+    )
     .where(eq(messages.ruleId, ruleId))
     .orderBy(sql`messages.created_at DESC`);
 
@@ -165,6 +171,20 @@ app.delete("/rules/:id", async (c) => {
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }
+});
+
+// Toggle rule active/inactive
+app.patch("/rules/:id/toggle", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const rule = await db.query.rules.findFirst({ where: eq(rules.id, id) });
+  if (!rule) return c.json({ error: "Rule not found" }, 404);
+
+  await db
+    .update(rules)
+    .set({ isActive: !rule.isActive })
+    .where(eq(rules.id, id));
+
+  return c.json({ status: "success", isActive: !rule.isActive });
 });
 
 /**
@@ -219,11 +239,8 @@ app.post("/ingest", zValidator("json", ingestSchema), async (c) => {
     for (const data of extractedData) {
       await db
         .insert(results)
-        .values({ messageId, key: data.key, value: data.value })
-        .onConflictDoUpdate({
-          target: [results.id],
-          set: { value: data.value },
-        });
+        .values({ messageId, ruleId, key: data.key, value: data.value })
+        .onConflictDoNothing();
     }
   }
 
@@ -303,11 +320,8 @@ app.post(
     for (const data of extractedData) {
       await db
         .insert(results)
-        .values({ messageId, key: data.key, value: data.value })
-        .onConflictDoUpdate({
-          target: [results.id],
-          set: { value: data.value },
-        });
+        .values({ messageId, ruleId, key: data.key, value: data.value })
+        .onConflictDoNothing();
     }
 
     return c.json({ status: "success", extracted: extractedData.length });
@@ -334,7 +348,13 @@ app.get("/summary/:ruleId", async (c) => {
       value: results.value,
     })
     .from(messages)
-    .leftJoin(results, eq(results.messageId, messages.messageId))
+    .leftJoin(
+      results,
+      and(
+        eq(results.messageId, messages.messageId),
+        eq(results.ruleId, messages.ruleId),
+      ),
+    )
     .where(eq(messages.ruleId, ruleId));
 
   const allRows = await query;
