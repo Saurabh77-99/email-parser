@@ -478,8 +478,11 @@ Return ONLY valid JSON. No markdown, no backticks.`;
     const data = await response.json();
 
     // Fallback if JSON mode fails
-    let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("Empty response");
+        let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      // Send the raw Gemini response back so we can see what happened
+      return c.json({ error: "Empty response", raw_gemini_output: JSON.stringify(data) }, 500);
+    }
 
     // Clean up markdown if Gemini adds it anyway
     text = text
