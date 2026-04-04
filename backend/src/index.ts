@@ -438,4 +438,67 @@ app.get("/export/:ruleId", async (c) => {
   return c.text(csvRows.join("\n"));
 });
 
+/**
+ * AI: Generate rule using Gemini
+ */
+app.post("/ai-generate-rule", async (c) => {
+  const { prompt } = await c.req.json();
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    return c.json({ error: "Gemini API key not configured on server" }, 500);
+  }
+
+  const systemPrompt = `You are an expert Gmail filter and data extraction engineer. Based on the user's plain English request, generate a JSON object with EXACTLY these 3 fields:
+  1. "name": A short, clear title for this rule.
+  2. "criteriaQuery": A valid Gmail search string (e.g., from:hr@company.com subject:resume).
+  3. "targetFields": A JSON object where keys are lowercase_with_underscores (the field names) and values are JavaScript regex strings to extract that data from a plain text email body.
+
+  Example Request: "Get resumes from HR and pull out name, email, and phone"
+  Example Output:
+  {
+    "name": "HR Resumes",
+    "criteriaQuery": "from:hr subject:resume",
+    "targetFields": {
+      "name": "Name:\\\\s*(.+)",
+      "email": "[\\\\w.+-]+@[\\\\w.-]+",
+      "phone": "(?:\\\\+?\\\\d{1,3}[-.\\\\s]?)?\\\\(?\\\\d{3}\\\\)?[-.\\\\s]?\\\\d{3}[-.\\\\s]?\\\\d{4}"
+    }
+  }
+
+  User Request: "${prompt}"
+
+  Return ONLY valid JSON. Do not include markdown formatting or backticks.`;
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt }] }],
+          generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+        }),
+      }
+    );
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) {
+      return c.json({ error: "Gemini returned empty response" }, 500);
+    }
+
+    const geminiResult = JSON.parse(text);
+    
+    // Stringify the targetFields object so it matches our database schema
+    geminiResult.targetFields = JSON.stringify(geminiResult.targetFields);
+
+    return c.json(geminiResult);
+  } catch (err: any) {
+    return c.json({ error: "AI generation failed: " + err.message }, 500);
+  }
+});
+
 export default app;
