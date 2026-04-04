@@ -282,23 +282,23 @@ app.post(
       if (match) extractedData.push({ key, value: match[1] || match[0] });
     }
 
-      // Store attachment metadata + extracted content
-  if (attachments && attachments.length > 0) {
-    for (const att of attachments) {
-      // Always store file type
-      extractedData.push({
-        key: "attachment_" + att.name,
-        value: att.mimeType,
-      });
-      // If Excel content was extracted, store it
-      if (att.extractedText && att.extractedText.length > 0) {
+    // Store attachment metadata + extracted content
+    if (attachments && attachments.length > 0) {
+      for (const att of attachments) {
+        // Always store file type
         extractedData.push({
-          key: "excel_data_" + att.name,
-          value: att.extractedText.substring(0, 2000), // limit size
+          key: "attachment_" + att.name,
+          value: att.mimeType,
         });
+        // If Excel content was extracted, store it
+        if (att.extractedText && att.extractedText.length > 0) {
+          extractedData.push({
+            key: "excel_data_" + att.name,
+            value: att.extractedText.substring(0, 2000), // limit size
+          });
+        }
       }
     }
-  }
 
     for (const data of extractedData) {
       await db
@@ -439,65 +439,105 @@ app.get("/export/:ruleId", async (c) => {
 });
 
 /**
- * AI: Generate rule using Gemini
+ * AI: Generate rule using Gemini (Simplified & Reliable)
  */
 app.post("/ai-generate-rule", async (c) => {
   const { prompt } = await c.req.json();
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    return c.json({ error: "Gemini API key not configured on server" }, 500);
+    return c.json({ error: "Gemini API key not configured" }, 500);
   }
 
-  const systemPrompt = `You are an expert Gmail filter and data extraction engineer. Based on the user's plain English request, generate a JSON object with EXACTLY these 3 fields:
-  1. "name": A short, clear title for this rule.
-  2. "criteriaQuery": A valid Gmail search string (e.g., from:hr@company.com subject:resume).
-  3. "targetFields": A JSON object where keys are lowercase_with_underscores (the field names) and values are JavaScript regex strings to extract that data from a plain text email body.
+  const systemPrompt = `You are an assistant that extracts Gmail search parameters from plain English.
+Based on the user's request, return ONLY a JSON object with these 3 fields:
+1. "name": A short title for the rule (e.g., "Amazon Invoices").
+2. "query": A valid Gmail search string (e.g., from:amazon subject:invoice).
+3. "fields": An array of lowercase strings representing the data to extract from the email body (e.g., ["name", "email", "order_id", "total_amount"]).
 
-  Example Request: "Get resumes from HR and pull out name, email, and phone"
-  Example Output:
-  {
-    "name": "HR Resumes",
-    "criteriaQuery": "from:hr subject:resume",
-    "targetFields": {
-      "name": "Name:\\\\s*(.+)",
-      "email": "[\\\\w.+-]+@[\\\\w.-]+",
-      "phone": "(?:\\\\+?\\\\d{1,3}[-.\\\\s]?)?\\\\(?\\\\d{3}\\\\)?[-.\\\\s]?\\\\d{3}[-.\\\\s]?\\\\d{4}"
-    }
-  }
+User Request: "${prompt}"
 
-  User Request: "${prompt}"
-
-  Return ONLY valid JSON. Do not include markdown formatting or backticks.`;
+Return ONLY valid JSON. No markdown, no backticks.`;
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: systemPrompt }] }],
-          generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+          },
         }),
-      }
+      },
     );
 
     const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    if (!text) {
-      return c.json({ error: "Gemini returned empty response" }, 500);
-    }
+    // Fallback if JSON mode fails
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Empty response");
+
+    // Clean up markdown if Gemini adds it anyway
+    text = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
 
     const geminiResult = JSON.parse(text);
-    
-    // Stringify the targetFields object so it matches our database schema
-    geminiResult.targetFields = JSON.stringify(geminiResult.targetFields);
+    const fieldsArray = geminiResult.fields || [];
 
-    return c.json(geminiResult);
+    // Backend handles the regex mapping (no more AI escaping issues!)
+    const REGEX_MAP: Record<string, string> = {
+      name: "Name:\\s*(.+)",
+      full_name: "Name:\\s*(.+)",
+      first_name: "First Name:\\s*(.+)",
+      last_name: "Last Name:\\s*(.+)",
+      email: "[\\w.+-]+@[\\w.-]+",
+      email_address: "[\\w.+-]+@[\\w.-]+",
+      phone:
+        "(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}",
+      phone_number:
+        "(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}",
+      company: "Company:\\s*(.+)",
+      company_name: "Company:\\s*(.+)",
+      experience: "Experience:\\s*(.+)",
+      location: "Location:\\s*(.+)",
+      city: "City:\\s*(.+)",
+      date: "Date:\\s*(.+)",
+      amount: "Amount:\\s*(\\$?[\\d,]+\\.?\\d*)",
+      total_amount: "Total Amount:\\s*(\\$?[\\d,]+\\.?\\d*)",
+      price: "Price:\\s*(\\$?[\\d,]+\\.?\\d*)",
+      order_id: "Order ID:\\s*(\\w+)",
+      invoice_number: "Invoice No:\\s*(\\w+)",
+      vendor: "Vendor:\\s*(.+)",
+    };
+
+    const targetFields: Record<string, string> = {};
+
+    fieldsArray.forEach((field: string) => {
+      const key = field.toLowerCase().trim().replace(/\s+/g, "_");
+      if (REGEX_MAP[key]) {
+        targetFields[key] = REGEX_MAP[key];
+      } else {
+        // Fallback for custom fields: assume format "Label: value"
+        const label = field
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+        targetFields[key] = label + ":\\s*(.+)";
+      }
+    });
+
+    return c.json({
+      name: geminiResult.name,
+      criteriaQuery: geminiResult.query,
+      targetFields: JSON.stringify(targetFields),
+    });
   } catch (err: any) {
-    return c.json({ error: "AI generation failed: " + err.message }, 500);
+    return c.json({ error: "AI Error: " + err.message }, 500);
   }
 });
 
