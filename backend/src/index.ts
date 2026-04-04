@@ -461,7 +461,8 @@ Return ONLY valid JSON. No markdown, no backticks.`;
 
   try {
     const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,      {
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -477,10 +478,13 @@ Return ONLY valid JSON. No markdown, no backticks.`;
     const data = await response.json();
 
     // Fallback if JSON mode fails
-        let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
       // Send the raw Gemini response back so we can see what happened
-      return c.json({ error: "Empty response", raw_gemini_output: JSON.stringify(data) }, 500);
+      return c.json(
+        { error: "Empty response", raw_gemini_output: JSON.stringify(data) },
+        500,
+      );
     }
 
     // Clean up markdown if Gemini adds it anyway
@@ -519,7 +523,7 @@ Return ONLY valid JSON. No markdown, no backticks.`;
     };
 
     const targetFields: Record<string, string> = {};
-    
+
     fieldsArray.forEach((field: string) => {
       const key = field.toLowerCase().trim().replace(/\s+/g, "_");
       if (REGEX_MAP[key]) {
