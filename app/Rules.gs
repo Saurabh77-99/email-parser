@@ -76,112 +76,132 @@ function renderRulesView() {
 }
 
 /**
- * VIEW: Create Rule Form
+ * VIEW: AI-Powered Create Rule Form
  */
 function renderCreateRuleView() {
   var builder = CardService.newCardBuilder();
   builder.setHeader(
     CardService.newCardHeader()
-      .setTitle("New Rule")
-      .setSubtitle("Define extraction parameters"),
+      .setTitle("AI Rule Creator")
+      .setSubtitle("Powered by Gemini - Just describe what you want!"),
   );
+
+  builder.addSection(createTopNavBar());
 
   var section = CardService.newCardSection()
+    .setHeader("Describe your rule")
     .addWidget(
       CardService.newTextInput()
-        .setFieldName("rule_name")
-        .setTitle("Friendly Name")
-        .setHint("e.g., Monthly Uber Export"),
-    )
-    .addWidget(
-      CardService.newTextInput()
-        .setFieldName("criteria_query")
-        .setTitle("Gmail Search Query")
-        .setHint("e.g., label:Invoices after:2024/01/01"),
-    )
-    .addWidget(
-      CardService.newTextInput()
-        .setFieldName("target_fields")
-        .setTitle("Extraction Schema (JSON)")
+        .setFieldName("ai_prompt")
+        .setTitle("What do you want to extract?")
         .setMultiline(true)
-        .setHint('{"Price": "Price:\\\\s*(\\\\d+)"}'),
+        .setHint("e.g., Find all invoices from Amazon and extract the order ID, total amount, and date.")
+    )
+    .addWidget(
+      CardService.newTextParagraph()
+        .setText("The AI will automatically figure out the Gmail search query and the exact data patterns to extract.")
     );
 
-  var actionSection = CardService.newCardSection().addWidget(
-    CardService.newTextButton()
-      .setText("SAVE RULE")
-      .setOnClickAction(
-        CardService.newAction().setFunctionName("handleCreateRule"),
+  var btnSection = CardService.newCardSection();
+  btnSection.addWidget(
+    CardService.newButtonSet()
+      .addButton(
+        CardService.newTextButton()
+          .setText("🪄 GENERATE & SAVE RULE")
+          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+          .setOnClickAction(
+            CardService.newAction().setFunctionName("handleAiRuleCreate"),
+          ),
+      )
+      .addButton(
+        CardService.newTextButton()
+          .setText("Cancel")
+          .setOnClickAction(
+            CardService.newAction().setFunctionName("renderRulesView"),
+          ),
       ),
   );
-
+  
   builder.addSection(section);
-  builder.addSection(actionSection);
+  builder.addSection(btnSection);
   builder.addSection(createBackButton());
 
   return builder.build();
 }
 
 /**
- * ACTION: Save Rule to Backend
+ * ACTION: Handle AI Rule Creation
  */
-function handleCreateRule(e) {
-  var name = e.formInput.rule_name;
-  var criteriaQuery = e.formInput.criteria_query;
-  var targetFields = e.formInput.target_fields;
-
-  if (!name || !criteriaQuery || !targetFields) {
+function handleAiRuleCreate(e) {
+  var prompt = e.formInput.ai_prompt;
+  
+  if (!prompt || prompt.length < 5) {
     return CardService.newActionResponseBuilder()
       .setNotification(
-        CardService.newNotification().setText("Please fill all fields."),
+        CardService.newNotification().setText("❌ Please describe what you want to extract."),
       )
       .build();
   }
 
   try {
-    var payload = {
-      name: name,
-      criteriaQuery: criteriaQuery,
-      targetFields: targetFields,
-    };
-
-    var response = UrlFetchApp.fetch(BACKEND_URL + "/rules", {
+    // 1. Ask Gemini to generate the rule config
+    var aiResponse = UrlFetchApp.fetch(BACKEND_URL + "/ai-generate-rule", {
       method: "post",
       contentType: "application/json",
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
+      payload: JSON.stringify({ prompt: prompt }),
+      muteHttpExceptions: true
     });
 
-    if (response.getResponseCode() === 200) {
+    var aiResult = JSON.parse(aiResponse.getContentText());
+
+    if (aiResult.error) {
       return CardService.newActionResponseBuilder()
         .setNotification(
-          CardService.newNotification().setText("Rule created successfully!"),
+          CardService.newNotification().setText("❌ AI Error: " + aiResult.error),
+        )
+        .build();
+    }
+
+    // 2. Save the generated rule to the backend
+    var saveResponse = UrlFetchApp.fetch(BACKEND_URL + "/rules", {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify({
+        name: aiResult.name,
+        criteriaQuery: aiResult.criteriaQuery,
+        targetFields: aiResult.targetFields
+      }),
+      muteHttpExceptions: true
+    });
+
+    if (saveResponse.getResponseCode() === 200) {
+      return CardService.newActionResponseBuilder()
+        .setNotification(
+          CardService.newNotification().setText("✅ AI Rule '" + aiResult.name + "' created!"),
         )
         .setNavigation(
           CardService.newNavigation().updateCard(renderRulesView()),
         )
         .build();
     } else {
-      var error = JSON.parse(response.getContentText());
       return CardService.newActionResponseBuilder()
         .setNotification(
-          CardService.newNotification().setText(
-            "Error: " + (error.error || "Failed to save"),
-          ),
+          CardService.newNotification().setText("❌ Failed to save AI rule."),
         )
         .build();
     }
   } catch (err) {
     return CardService.newActionResponseBuilder()
       .setNotification(
-        CardService.newNotification().setText(
-          "System error: " + err.toString(),
-        ),
+        CardService.newNotification().setText("System error: " + err.toString()),
       )
       .build();
   }
 }
 
+/**
+ * ACTION: Delete Rule
+ */
 function handleDeleteRule(e) {
   var ruleId = e.parameters.ruleId;
   try {
@@ -205,6 +225,9 @@ function handleDeleteRule(e) {
     .build();
 }
 
+/**
+ * ACTION: Run Single Rule
+ */
 function runSingleRule(e) {
   var ruleId = parseInt(e.parameters.ruleId);
   var ruleName = e.parameters.ruleName;
@@ -221,10 +244,11 @@ function runSingleRule(e) {
     var count = 0;
     threads.forEach(function (thread) {
       thread.getMessages().forEach(function (message) {
-        if (hasLabel(message, "Processed")) return;
+        // Use per-rule label to avoid conflicts
+        if (hasLabel(message, "Processed_R" + ruleId)) return;
         var result = ingestMessage(message, ruleId);
         if (result && result.status === "success") {
-          markAsProcessed(message);
+          markAsProcessed(message, ruleId);
           count++;
         }
       });
@@ -243,6 +267,18 @@ function runSingleRule(e) {
         CardService.newNotification().setText("Error: " + err.toString()),
       )
       .build();
+  }
+}
+
+/**
+ * HELPER: Parse "Label: Example" into regex object
+ */
+function parseCustomField(input, targetFields) {
+  if (input && input.includes(":")) {
+    var parts = input.split(":");
+    var key = parts[0].trim().toLowerCase().replace(/\s+/g, "_");
+    var label = parts[0].trim();
+    targetFields[key] = label + ":\\s*(.+)";
   }
 }
 
