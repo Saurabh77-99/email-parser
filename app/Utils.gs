@@ -103,24 +103,47 @@ function ingestMessageRich(message, ruleId) {
     var atts = message.getAttachments();
     atts.forEach(function(att) {
       var mimeType = att.getContentType();
-      // Only capture PDF and Excel
-      if (mimeType === "application/pdf" ||
-          mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      
+      // Capture Excel files
+      if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
           mimeType === "application/vnd.ms-excel") {
         attachments.push({
           name: att.getName(),
           mimeType: mimeType,
-          data: Utilities.base64Encode(att.getBytes())
+          data: Utilities.base64Encode(att.getBytes()),
+          isExcel: true
+        });
+      }
+      // Capture PDFs (we store metadata, PDF reading needs external API)
+      else if (mimeType === "application/pdf") {
+        attachments.push({
+          name: att.getName(),
+          mimeType: mimeType,
+          data: Utilities.base64Encode(att.getBytes()),
+          isExcel: false
         });
       }
     });
+
+    // If there's an Excel file, extract its content first
+    var excelContent = "";
+    if (attachments.length > 0) {
+      for (var i = 0; i < attachments.length; i++) {
+        if (attachments[i].isExcel) {
+          excelContent = extractExcelContent(attachments[i].data, attachments[i].name);
+          if (excelContent) {
+            attachments[i].extractedText = excelContent;
+          }
+        }
+      }
+    }
 
     var payload = {
       ruleId: ruleId,
       messageId: message.getId(),
       subject: message.getSubject(),
       sender: message.getFrom(),
-      rawBody: message.getPlainBody().substring(0, 5000), // limit size
+      rawBody: message.getPlainBody().substring(0, 5000),
       attachments: attachments
     };
 
@@ -134,6 +157,53 @@ function ingestMessageRich(message, ruleId) {
   } catch (e) {
     console.error("ingestMessageRich error: " + e.toString());
     return null;
+  }
+}
+
+// Extract text from Excel file (base64) by converting to temp Google Sheet
+function extractExcelContent(base64Data, fileName) {
+  try {
+    var blob = Utilities.newBlob(Utilities.base64Decode(base64Data), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+    
+    // Create temp file in Drive
+    var tempFile = DriveApp.createFile(blob);
+    var fileId = tempFile.getId();
+    
+    // Wait for Drive to process
+    Utilities.sleep(2000);
+    
+    // Try to open as Google Sheets
+    try {
+      var sheetFile = Drive.Files.copy({
+        mimeType: "application/vnd.google-apps.spreadsheet"
+      }, fileId);
+      
+      var sheet = SpreadsheetApp.openById(sheetFile.id).getSheets()[0];
+      var lastRow = sheet.getLastRow();
+      var lastCol = sheet.getLastColumn();
+      
+      var textContent = "";
+      if (lastRow > 0 && lastCol > 0) {
+        var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+        data.forEach(function(row) {
+          var rowText = row.filter(function(cell) { return cell !== ""; }).join(" | ");
+          if (rowText) textContent += rowText + "\n";
+        });
+      }
+      
+      // Delete temp files
+      DriveApp.getFileById(sheetFile.id).setTrashed(true);
+      DriveApp.getFileById(fileId).setTrashed(true);
+      
+      return textContent.trim();
+    } catch (e) {
+      // If conversion fails, delete temp file and return empty
+      DriveApp.getFileById(fileId).setTrashed(true);
+      return "";
+    }
+  } catch (e) {
+    console.error("Excel extraction error: " + e.toString());
+    return "";
   }
 }
 

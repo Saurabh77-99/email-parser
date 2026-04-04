@@ -71,6 +71,15 @@ function renderSettingsView() {
     );
   builder.addSection(scheduleSection);
 
+  var syncSection = CardService.newCardSection()
+    .setHeader("Manual Sync")
+    .addWidget(CardService.newButtonSet()
+      .addButton(CardService.newTextButton()
+        .setText("🔄 TRIGGER FULL SYNC")
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOnClickAction(CardService.newAction().setFunctionName("triggerFullSync"))));
+  builder.addSection(syncSection);
+
   var advancedSection = CardService.newCardSection()
     .setHeader("Advanced Tools")
     .addWidget(

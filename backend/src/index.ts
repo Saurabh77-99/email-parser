@@ -245,6 +245,8 @@ const ingestWithAttachmentsSchema = z.object({
         name: z.string(),
         mimeType: z.string(),
         data: z.string(),
+        isExcel: z.boolean().optional(),
+        extractedText: z.string().optional(),
       }),
     )
     .optional(),
@@ -280,14 +282,23 @@ app.post(
       if (match) extractedData.push({ key, value: match[1] || match[0] });
     }
 
-    if (attachments && attachments.length > 0) {
-      for (const att of attachments) {
+      // Store attachment metadata + extracted content
+  if (attachments && attachments.length > 0) {
+    for (const att of attachments) {
+      // Always store file type
+      extractedData.push({
+        key: "attachment_" + att.name,
+        value: att.mimeType,
+      });
+      // If Excel content was extracted, store it
+      if (att.extractedText && att.extractedText.length > 0) {
         extractedData.push({
-          key: "attachment_" + att.name,
-          value: att.mimeType,
+          key: "excel_data_" + att.name,
+          value: att.extractedText.substring(0, 2000), // limit size
         });
       }
     }
+  }
 
     for (const data of extractedData) {
       await db
