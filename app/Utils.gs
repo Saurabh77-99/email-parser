@@ -115,6 +115,7 @@ function ingestMessageRich(message, ruleId) {
           if (extracted) attObj.extractedText = extracted;
         } else if (mimeType === "application/pdf") {
           console.log("Extracting PDF: " + att.getName());
+          Utilities.sleep(3000); 
           var pdfText = extractPdfContent(attObj.data, attObj.name);
           if (pdfText) attObj.extractedText = pdfText;
         }
