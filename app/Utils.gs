@@ -158,10 +158,9 @@ function extractExcelContent(base64Data, fileName) {
     var tempFile = DriveApp.createFile(blob);
     Utilities.sleep(2000);
 
-    var sheetFile = Drive.Files.copy(
-      { mimeType: "application/vnd.google-apps.spreadsheet" },
-      tempFile.getId(),
-    );
+    var sheetFile = Drive.Files.copy(tempFile.getId(), {
+      mimeType: "application/vnd.google-apps.spreadsheet",
+    });
     var sheet = SpreadsheetApp.openById(sheetFile.id).getSheets()[0];
     var lastRow = sheet.getLastRow();
     var lastCol = sheet.getLastColumn();
@@ -211,12 +210,15 @@ function extractPdfContent(base64Data, fileName) {
 
     // Convert PDF → Google Doc with OCR
     var docFile = Drive.Files.copy(
+      tempFile.getId(),
       {
         mimeType: "application/vnd.google-apps.document",
-        title: fileName + "_ocr",
+        name: fileName + "_ocr",
       },
-      tempFile.getId(),
-      { ocr: true },
+      {
+        ocrLanguage: "en",
+        supportsAllDrives: true,
+      },
     );
 
     var doc = DocumentApp.openById(docFile.id);
