@@ -153,43 +153,35 @@ function extractExcelContent(base64Data, fileName) {
     var blob = Utilities.newBlob(
       Utilities.base64Decode(base64Data),
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      fileName,
+      fileName
     );
     var tempFile = DriveApp.createFile(blob);
     Utilities.sleep(2000);
 
-    var sheetFile = Drive.Files.copy(tempFile.getId(), {
-      mimeType: "application/vnd.google-apps.spreadsheet",
-    });
+    // v2 correct syntax: resource first, fileId second
+    var sheetFile = Drive.Files.copy(
+      { mimeType: "application/vnd.google-apps.spreadsheet" },
+      tempFile.getId()
+    );
+
     var sheet = SpreadsheetApp.openById(sheetFile.id).getSheets()[0];
     var lastRow = sheet.getLastRow();
     var lastCol = sheet.getLastColumn();
     var textContent = "";
 
     if (lastRow > 0 && lastCol > 0) {
-      sheet
-        .getRange(1, 1, lastRow, lastCol)
-        .getValues()
-        .forEach(function (row) {
-          var rowText = row
-            .filter(function (c) {
-              return c !== "";
-            })
-            .join(" | ");
-          if (rowText) textContent += rowText + "\n";
-        });
+      sheet.getRange(1, 1, lastRow, lastCol).getValues().forEach(function(row) {
+        var rowText = row.filter(function(c) { return c !== ""; }).join(" | ");
+        if (rowText) textContent += rowText + "\n";
+      });
     }
 
     DriveApp.getFileById(sheetFile.id).setTrashed(true);
     DriveApp.getFileById(tempFile.getId()).setTrashed(true);
-    console.log(
-      "Excel extracted: " + fileName + " (" + textContent.length + " chars)",
-    );
+    console.log("Excel extracted: " + fileName + " (" + textContent.length + " chars)");
     return textContent.trim();
   } catch (e) {
-    console.error(
-      "Excel extraction failed for " + fileName + ": " + e.toString(),
-    );
+    console.error("Excel extraction failed for " + fileName + ": " + e.toString());
     return "";
   }
 }
@@ -203,37 +195,31 @@ function extractPdfContent(base64Data, fileName) {
     var blob = Utilities.newBlob(
       Utilities.base64Decode(base64Data),
       "application/pdf",
-      fileName,
+      fileName
     );
     var tempFile = DriveApp.createFile(blob);
     Utilities.sleep(2000);
 
-    // Convert PDF → Google Doc with OCR
+    // v2 correct syntax with OCR
     var docFile = Drive.Files.copy(
-      tempFile.getId(),
-      {
+      { 
         mimeType: "application/vnd.google-apps.document",
-        name: fileName + "_ocr",
+        title: fileName + "_ocr"
       },
-      {
-        ocrLanguage: "en",
-        supportsAllDrives: true,
-      },
+      tempFile.getId(),
+      { ocr: true, ocrLanguage: "en" }
     );
 
     var doc = DocumentApp.openById(docFile.id);
     var text = doc.getBody().getText();
 
-    // Cleanup temp files
     DriveApp.getFileById(docFile.id).setTrashed(true);
     DriveApp.getFileById(tempFile.getId()).setTrashed(true);
 
     console.log("PDF extracted: " + fileName + " (" + text.length + " chars)");
     return text.trim();
   } catch (e) {
-    console.error(
-      "PDF extraction failed for " + fileName + ": " + e.toString(),
-    );
+    console.error("PDF extraction failed for " + fileName + ": " + e.toString());
     return "";
   }
 }
